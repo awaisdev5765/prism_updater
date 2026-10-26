@@ -3,7 +3,6 @@
 [![pub package](https://img.shields.io/pub/v/prism_updater.svg)](https://pub.dev/packages/prism_updater)
 [![popularity](https://img.shields.io/pub/popularity/prism_updater.svg)](https://pub.dev/packages/prism_updater/score)
 [![likes](https://img.shields.io/pub/likes/prism_updater.svg)](https://pub.dev/packages/prism_updater/score)
-[![CI](https://github.com/awaisdev5765/prism_updater/actions/workflows/ci.yml/badge.svg)](https://github.com/awaisdev5765/prism_updater/actions)
 
 Cross-platform **in-app update experience for Flutter** — version checks
 against any source, force-update and soft-update screens, minimum-version
