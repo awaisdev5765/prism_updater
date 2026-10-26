@@ -72,6 +72,7 @@ class PrismUpdateGate extends StatelessWidget {
                       child: child,
                     ),
           PrismUpdateChecking() => checkingBuilder?.call(context) ?? child,
+          PrismUpdateSkipped() => child,
           PrismUpdateFailure() => failureBuilder?.call(context) ?? child,
           _ => child,
         };

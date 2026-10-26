@@ -11,7 +11,7 @@ import 'package:prism_updater/prism_updater.dart';
 ///
 /// ```json
 /// {
-///   "latest":  { "stable": "2.1.0", "beta": "2.2.0" },
+///   "latest":  { "stable": "2.1.0", "beta": "2.3.0" },
 ///   "minimum": { "stable": "1.5.0" },
 ///   "notes":   { "2.1.0": "What's new in this release" },
 ///   "urls": {
@@ -26,7 +26,7 @@ const String releaseMetadata = '''
 {
   "latest": {"stable": "2.1.0", "beta": "2.3.0"},
   "minimum": {"stable": "1.5.0"},
-  "notes": {"2.1.0": "Bug fixes, a new gate widget, and faster checks."},
+  "notes": {"2.1.0": "Bug fixes, native store flows, and download progress."},
   "urls": {
     "android": "https://github.com/awaisdev5765/prism_updater/releases",
     "ios": "https://apps.apple.com/developer/example/id1",
@@ -49,19 +49,18 @@ class _MetadataServer {
 
   static Future<_MetadataServer> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    late final _MetadataServer holder;
     server.listen((request) async {
       request.response.headers.contentType = ContentType.json;
       request.response.write(releaseMetadata);
       await request.response.close();
     });
-    holder = _MetadataServer._(
+    return _MetadataServer._(
       Uri.parse('http://localhost:${server.port}/updates.json'),
     );
-    return holder;
   }
 }
 
+/// Root widget demonstrating the update gate.
 class _ExampleApp extends StatelessWidget {
   const _ExampleApp({required this.metadataUrl});
 
@@ -77,8 +76,6 @@ class _ExampleApp extends StatelessWidget {
   }
 }
 
-/// Interactive playground: pick the installed version and the gate behavior,
-/// then run a check and watch the update flow react.
 /// Interactive playground showing the gate in action.
 class UpdatePlayground extends StatefulWidget {
   /// Creates the playground.
@@ -100,6 +97,7 @@ class _UpdatePlaygroundState extends State<UpdatePlayground> {
   GateBehavior _behavior = GateBehavior.block;
 
   bool _autoCheck = true;
+  bool _respectSkips = true;
 
   PrismUpdateController? _controller;
 
@@ -115,6 +113,7 @@ class _UpdatePlaygroundState extends State<UpdatePlayground> {
       source: RemoteUpdateSource(url: widget.metadataUrl),
       currentVersion: PrismVersion.parse(_installedVersion),
       autoCheck: _autoCheck,
+      skipStore: PrismSkipStore(),
     );
     setState(() => _controller = controller);
   }
@@ -133,12 +132,23 @@ class _UpdatePlaygroundState extends State<UpdatePlayground> {
           installedVersion: _installedVersion,
           behavior: _behavior,
           autoCheck: _autoCheck,
+          respectSkips: _respectSkips,
           controller: controller,
-          onVersionChanged: (v) =>
-              setState(() => _installedVersion = v),
+          onVersionChanged: (v) => setState(() => _installedVersion = v),
           onBehaviorChanged: (b) => setState(() => _behavior = b),
           onAutoCheckChanged: (v) => setState(() => _autoCheck = v),
-          onRecheck: () => controller.checkNow(),
+          onRespectSkipsChanged: (v) => setState(() => _respectSkips = v),
+          onRecheck: () => controller.checkNow(ignoreSkips: !_respectSkips),
+          onSkip: () => controller.skipCurrentUpdate(),
+          onNativeStore: () async {
+            final launcher = StoreFlowLauncher(iosAppleId: '123456789');
+            final result = await launcher.launch();
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Store flow: ${result.name}')),
+              );
+            }
+          },
         ),
       ),
     );
@@ -150,21 +160,29 @@ class _PlaygroundControls extends StatelessWidget {
     required this.installedVersion,
     required this.behavior,
     required this.autoCheck,
+    required this.respectSkips,
     required this.controller,
     required this.onVersionChanged,
     required this.onBehaviorChanged,
     required this.onAutoCheckChanged,
+    required this.onRespectSkipsChanged,
     required this.onRecheck,
+    required this.onSkip,
+    required this.onNativeStore,
   });
 
   final String installedVersion;
   final GateBehavior behavior;
   final bool autoCheck;
+  final bool respectSkips;
   final PrismUpdateController controller;
   final ValueChanged<String> onVersionChanged;
   final ValueChanged<GateBehavior> onBehaviorChanged;
   final ValueChanged<bool> onAutoCheckChanged;
+  final ValueChanged<bool> onRespectSkipsChanged;
   final VoidCallback onRecheck;
+  final VoidCallback onSkip;
+  final Future<void> Function() onNativeStore;
 
   static const _versions = ['1.2.0', '1.4.2', '2.1.0', '2.3.0'];
 
@@ -184,8 +202,8 @@ class _PlaygroundControls extends StatelessWidget {
             const SizedBox(height: 8),
             const Text(
               'Pick an installed version and a gate behavior, then watch the '
-              'update flow react. The metadata is served by a local HTTP '
-              'server embedded in this example.',
+              'update flow react. Skips persist across restarts via '
+              'SharedPreferences.',
             ),
             const SizedBox(height: 16),
             SegmentedButton<String>(
@@ -194,9 +212,8 @@ class _PlaygroundControls extends StatelessWidget {
                   ButtonSegment(value: v, label: Text(v)),
               ],
               selected: {installedVersion},
-              onSelectionChanged: (selection) => onVersionChanged(
-                selection.first,
-              ),
+              onSelectionChanged: (selection) =>
+                  onVersionChanged(selection.first),
             ),
             const SizedBox(height: 4),
             Text(
@@ -210,10 +227,7 @@ class _PlaygroundControls extends StatelessWidget {
             const SizedBox(height: 16),
             SegmentedButton<GateBehavior>(
               segments: const [
-                ButtonSegment(
-                  value: GateBehavior.block,
-                  label: Text('Block'),
-                ),
+                ButtonSegment(value: GateBehavior.block, label: Text('Block')),
                 ButtonSegment(
                   value: GateBehavior.banner,
                   label: Text('Banner'),
@@ -227,10 +241,35 @@ class _PlaygroundControls extends StatelessWidget {
               value: autoCheck,
               onChanged: onAutoCheckChanged,
             ),
-            FilledButton.icon(
-              onPressed: onRecheck,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Check for updates now'),
+            SwitchListTile(
+              title: const Text('Respect skipped versions'),
+              subtitle: const Text(
+                'Skipped soft updates show "skipped" instead of a prompt',
+              ),
+              value: respectSkips,
+              onChanged: onRespectSkipsChanged,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: onRecheck,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Check now'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onSkip,
+                  icon: const Icon(Icons.snooze),
+                  label: const Text('Skip this version'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onNativeStore,
+                  icon: const Icon(Icons.storefront),
+                  label: const Text('Native store flow'),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Card(

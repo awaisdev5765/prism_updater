@@ -28,6 +28,7 @@ export 'src/update_controller.dart'
         PrismUpdateChecking,
         PrismUpdateUpToDate,
         PrismUpdateAvailable,
+        PrismUpdateSkipped,
         PrismUpdateFailure;
 export 'src/update_gate.dart' show PrismUpdateGate, GateBehavior;
 export 'src/update_screens.dart'
@@ -37,3 +38,13 @@ export 'src/update_screens.dart'
         PrismUpdateProgress,
         PrismUpdateStatusView;
 export 'src/update_platform.dart' show PrismUpdatePlatformInfo;
+export 'src/download_manager.dart'
+    show
+        PrismDownloadManager,
+        PrismDownloadEvent,
+        PrismDownloadProgress,
+        PrismDownloadComplete,
+        PrismDownloadFailed,
+        PrismDownloadCancelled;
+export 'src/store_flow.dart' show StoreFlowLauncher, StoreLaunchResult;
+export 'src/skip_store.dart' show PrismSkipStore;

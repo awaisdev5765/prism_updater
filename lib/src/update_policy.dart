@@ -1,5 +1,16 @@
 import 'version.dart';
 
+/// Deterministic hash of a device/installation identifier for staged
+/// rollouts. Same input always yields the same bucket.
+int _stableBucket(String deviceId) {
+  var hash = 0xcbf29ce4;
+  for (final code in deviceId.codeUnits) {
+    hash ^= code;
+    hash = (hash * 0x01000193) & 0xFFFFFFFF;
+  }
+  return hash % 100;
+}
+
 /// Update channel a release belongs to.
 enum UpdateChannel {
   /// Stable public releases.
@@ -54,7 +65,8 @@ class UpdatePolicy {
   const UpdatePolicy({
     this.minimumVersion,
     this.channels = const {UpdateChannel.stable},
-    this.allowSkippedVersions = true,
+    this.rolloutPercent = 100,
+    this.rolloutDeviceId,
   });
 
   /// Builds a policy from a remote configuration map, e.g.:
@@ -85,8 +97,16 @@ class UpdatePolicy {
   /// Channels considered when resolving the latest version.
   final Set<UpdateChannel> channels;
 
-  /// Whether users may skip non-forced versions they've dismissed before.
-  final bool allowSkippedVersions;
+  /// Percentage of devices (0–100) that see a soft update during a staged
+  /// rollout. Forced updates ignore the rollout and always apply.
+  ///
+  /// Assignment is deterministic: the same [rolloutDeviceId] always gets the
+  /// same bucket, so devices don't flip between check runs.
+  final int rolloutPercent;
+
+  /// Device/installation identifier used for rollout bucketing. When null,
+  /// rollout gating treats the device as included (useful for tests).
+  final String? rolloutDeviceId;
 
   /// Evaluates [current] against the policy using the latest known
   /// version per channel in [latestByChannel].
@@ -115,6 +135,16 @@ class UpdatePolicy {
       );
     }
     if (current < latest) {
+      // Staged rollout: only the selected percentage of devices sees the
+      // soft update. Forced updates below the minimum have already returned.
+      final included = rolloutPercent >= 100 || _isIncludedInRollout();
+      if (!included) {
+        return UpdatePolicyResult(
+          UpdateDecision.upToDate,
+          latest: latest,
+          minimum: minimum,
+        );
+      }
       return UpdatePolicyResult(
         UpdateDecision.softUpdate,
         latest: latest,
@@ -126,5 +156,11 @@ class UpdatePolicy {
       latest: latest,
       minimum: minimum,
     );
+  }
+
+  bool _isIncludedInRollout() {
+    final deviceId = rolloutDeviceId;
+    if (deviceId == null || deviceId.isEmpty) return true;
+    return _stableBucket(deviceId) < rolloutPercent;
   }
 }

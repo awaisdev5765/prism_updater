@@ -44,6 +44,10 @@ Part of the **Prism package family**:
 - [Custom UI](#custom-ui)
 - [Headless usage](#headless-usage)
 - [Channels (beta / alpha)](#channels-beta--alpha)
+- [Staged rollouts](#staged-rollouts)
+- [Skip persistence](#skip-persistence)
+- [Native store flows](#native-store-flows)
+- [Direct downloads with progress](#direct-downloads-with-progress)
 - [Testing](#testing)
 - [Platform notes](#platform-notes)
 - [FAQ](#faq)
@@ -259,6 +263,99 @@ Builds can pick their channel at runtime (flavor, compile-time constant, or
 remote config). The latest version across *enabled* channels wins; disabled
 channels are ignored, so beta users aren't dragged onto alpha releases.
 
+## Staged rollouts
+
+Ship to a percentage of devices first and grow it as confidence builds:
+
+```dart
+const policy = UpdatePolicy(
+  rolloutPercent: 20,          // 20% of devices see the soft update
+  rolloutDeviceId: installId,  // stable per-install id (e.g. a UUID)
+);
+```
+
+- Assignment is **deterministic** (FNV-1a hash of the device id): the same
+  device always lands in the same bucket, so users never flip between
+  "update available" and "up to date" between launches.
+- **Forced updates ignore rollouts** — the minimum-version floor always
+  applies to everyone.
+- Bump `rolloutPercent` server-side (it can come from the metadata) to grow
+  the rollout: 20 → 50 → 100.
+
+## Skip persistence
+
+Users who press "Maybe later" shouldn't be nagged on every launch about the
+same version:
+
+```dart
+final controller = PrismUpdateController(
+  source: source,
+  currentVersion: current,
+  skipStore: PrismSkipStore(), // persists via SharedPreferences
+);
+```
+
+- Skipped soft updates surface as `PrismUpdateSkipped` — the gate renders
+  your app normally.
+- `controller.skipCurrentUpdate()` records the skip; `checkNow(ignoreSkips:
+  true)` re-shows everything (e.g. from a "Check for updates" menu item).
+- **Forced updates are never suppressed** by skips.
+
+## Native store flows
+
+On Android and iOS, `StoreFlowLauncher` opens the real store UI — no
+browser hop:
+
+- **Android**: launches the Play Store page via the `market://` intent
+  (registered as a proper Flutter plugin; falls back to the https URL when
+  the store app is missing).
+- **iOS**: presents the native `SKStoreProductViewController` sheet in-app.
+  Pass the numeric Apple ID from your App Store link:
+
+```dart
+final launcher = StoreFlowLauncher(iosAppleId: '123456789');
+final result = await launcher.launch(); // launched | unavailable | failed
+```
+
+Web and desktop return `StoreLaunchResult.unavailable` — pair them with the
+direct download flow below.
+
+## Direct downloads with progress
+
+Platforms without a store (Windows, macOS, Linux, or web links) get a real
+download manager with progress and cancellation:
+
+```dart
+final manager = PrismDownloadManager();
+await for (final event in manager.download(
+  url: Uri.parse('https://example.com/App-2.1.0-Setup.exe'),
+  savePath: '${(await getTemporaryDirectory()).path}/update.exe',
+)) {
+  switch (event) {
+    case PrismDownloadProgress(:final fraction, :final bytesPerSecond):
+      setState(() => progress = fraction);      // 0..1, null if unknown size
+    case PrismDownloadComplete(:final file):
+      installUpdate(file.path);
+    case PrismDownloadFailed(:final error):
+      showError(error);
+    case PrismDownloadCancelled():
+      break;
+  }
+}
+```
+
+Or drop in the ready-made UI:
+
+```dart
+Navigator.of(context).push(MaterialPageRoute(
+  builder: (_) => PrismDownloadScreen(
+    url: downloadUrl,
+    savePath: savePath,
+    onComplete: (event) { /* handle completion */ },
+  ),
+));
+```
+
 ## Testing
 
 `StaticUpdateSource` makes the entire pipeline deterministic:
@@ -326,10 +423,12 @@ banner dismissal lasts for the current session.
 
 ## Roadmap
 
-- [ ] Native store flows (`in_app_update` on Android, App Store sheet on iOS)
-- [ ] Download progress reporting for direct downloads
-- [ ] Per-version skip persistence
-- [ ] Staged rollout percentage support in the policy
+- [x] Native store flows (Play Store intent on Android, App Store sheet on iOS)
+- [x] Download progress reporting for direct downloads
+- [x] Per-version skip persistence
+- [x] Staged rollout percentage support in the policy
+- [ ] In-place install execution on Windows (run the downloaded installer)
+- [ ] Delta downloads / binary patches
 
 ## Contributing
 

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'download_manager.dart';
 import 'update_controller.dart';
 import 'update_platform.dart';
 import 'update_policy.dart';
@@ -201,6 +204,113 @@ class PrismUpdateProgress extends StatelessWidget {
   }
 }
 
+/// Full-screen page with a live progress bar while a direct download runs.
+///
+/// Wraps `PrismDownloadManager.download` for a complete, branded download
+/// experience on desktop/web flows.
+class PrismDownloadScreen extends StatefulWidget {
+  /// Creates the download screen.
+  const PrismDownloadScreen({
+    required this.url,
+    required this.savePath,
+    this.title = 'Downloading update',
+    this.manager,
+    this.onComplete,
+    super.key,
+  });
+
+  /// The file to download.
+  final Uri url;
+
+  /// Where to save it.
+  final String savePath;
+
+  /// Headline shown above the progress bar.
+  final String title;
+
+  /// Override the manager (tests).
+  final PrismDownloadManager? manager;
+
+  /// Called with the terminal event.
+  final ValueChanged<PrismDownloadEvent>? onComplete;
+
+  @override
+  State<PrismDownloadScreen> createState() => _PrismDownloadScreenState();
+}
+
+class _PrismDownloadScreenState extends State<PrismDownloadScreen> {
+  PrismDownloadProgress? _progress;
+  StreamSubscription<PrismDownloadEvent>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    final manager = widget.manager ?? PrismDownloadManager();
+    _sub = manager
+        .download(url: widget.url, savePath: widget.savePath)
+        .listen((event) {
+      if (event is PrismDownloadProgress) {
+        setState(() => _progress = event);
+      } else {
+        widget.onComplete?.call(event);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_sub?.cancel());
+    super.dispose();
+  }
+
+  String _label(PrismDownloadProgress progress) {
+    final fraction = progress.fraction;
+    final percent =
+        fraction == null ? null : (fraction * 100).toStringAsFixed(0);
+    final speed = (progress.bytesPerSecond / 1024).toStringAsFixed(0);
+    return percent == null
+        ? '$speed KB/s'
+        : '$percent% · $speed KB/s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = _progress;
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(widget.title, style: theme.textTheme.headlineSmall),
+              const SizedBox(height: 24),
+              if (progress == null || progress.isIndeterminate)
+                const LinearProgressIndicator()
+              else ...[
+                LinearProgressIndicator(value: progress.fraction),
+                const SizedBox(height: 8),
+                Text(
+                  _label(progress),
+                  style: theme.textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 24),
+              OutlinedButton(
+                onPressed: () => unawaited(_sub?.cancel()),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Read-only summary widget of any controller state, useful for debug pages.
 class PrismUpdateStatusView extends StatelessWidget {
   /// Creates the status view.
@@ -225,6 +335,7 @@ class PrismUpdateStatusView extends StatelessWidget {
                   'Update required — latest $latest',
                 _ => 'Update available — latest $latest',
               },
+      PrismUpdateSkipped() => 'Update skipped for now',
       PrismUpdateFailure(:final error) => 'Check failed: $error',
     };
     return Text(text, style: theme.textTheme.bodyMedium);
